@@ -5,8 +5,10 @@
  * Works only on big endian machines and ipv4 targets.
  */
  
-#include <string.h>
+#include <sys/types.h>
 #include <sys/socket.h>
+#include <netinet/in.h>
+#include <string.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <stdio.h>
