@@ -16,6 +16,7 @@
 #include <netdb.h>
 #include <pthread.h>
 
+#include "rtp.h"
 #include "rtpp_time.h"
 
 struct sockaddr_in *create_peer(char *host, int port) {
@@ -55,7 +56,10 @@ static void *
 rtp_receiver(void *targ)
 {
   const struct rtp_receiver_args *rrap;
-  char response[512];
+  union {
+    struct rtp_hdr hdr;
+    char raw[512];
+  } response;
   struct sockaddr_in sender;
   socklen_t sender_len = sizeof(sender);
 
@@ -67,7 +71,7 @@ rtp_receiver(void *targ)
       pthread_mutex_lock(&rrap->rrsp->lock);
       rrap->rrsp->last_recv_ts = getdtime();
       pthread_mutex_unlock(&rrap->rrsp->lock);
-      uint16_t seq = ntohs(response[2]);
+      uint16_t seq = ntohs(response.hdr.seq);
       printf("received %d bytes from target port %d, seq %u\n", bytes_received, ntohs(sender.sin_port), seq);
     }
   }
@@ -112,14 +116,6 @@ void rtp_scan(char *host, int port_range_start, int port_range_end, int ppp, int
       packet[3] = loops; // increase seq with every packet
       sendto(rra.udp_socket, &packet, sizeof(packet), 0, (const struct sockaddr *)target, sizeof(struct sockaddr_in));
       usleep(1000000 / pps);
-#if 0
-
-      int bytes_received = recvfrom(rra.udp_socket, &response, sizeof(response), 0, (struct sockaddr *)&sender, &sender_len);
-      if (bytes_received >= 12) {
-        uint16_t seq = ntohs(response[2]);
-        printf("received %d bytes from target port %d, seq %u\n", bytes_received, ntohs(sender.sin_port), seq);
-      }
-#endif
     }
   }
 
@@ -141,8 +137,8 @@ e0:
 
 int main(int argc, char *argv[]) {
   int ppp = 4;
-  int payload_size = 0;
-  int payload_type = 0;
+  int payload_size = 160;
+  int payload_type = 8;
   if (argc < 4) {
     printf("syntax: rtpscan hostname port_range_start port_range_end [packets_per_port] [payload_size] [payload_type]\n");
     return -1;
