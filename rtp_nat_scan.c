@@ -79,7 +79,10 @@ rtp_receiver(void *targ)
 
 void rtp_scan(char *host, int port_range_start, int port_range_end, int ppp, int payload_size, int payload_type) {
   struct sockaddr_in *target;
-  char packet[12 + payload_size];
+  union {
+    struct rtp_hdr hdr;
+    char raw[sizeof(struct rtp_hdr) + 512];
+  } packet;
   int port;
   int loops;
   struct rtp_receiver_stats rrs = {.last_recv_ts = getdtime()};
@@ -97,8 +100,9 @@ void rtp_scan(char *host, int port_range_start, int port_range_end, int ppp, int
   }
 
   memset(&packet, 0, sizeof(packet));
-  packet[0] = 0x80; // RTP version 2
-  packet[1] = 0x80 | (payload_type & 0x7F); // marker bit set
+  packet.hdr.version = 2; // RTP version 2
+  packet.hdr.pt = payload_type;
+  packet.hdr.mbt = 1; // marker bit set
 
   if (pthread_mutex_init(&rrs.lock, NULL) != 0) {
     printf("unable to create receiver mutex\n");
@@ -113,8 +117,8 @@ void rtp_scan(char *host, int port_range_start, int port_range_end, int ppp, int
   for (port = port_range_start; port < port_range_end; port += 2) {
     target->sin_port = htons(port);
     for (loops = 0; loops < ppp; loops++) {
-      packet[3] = loops; // increase seq with every packet
-      sendto(rra.udp_socket, &packet, sizeof(packet), 0, (const struct sockaddr *)target, sizeof(struct sockaddr_in));
+      packet.hdr.seq = htons(loops); // increase seq with every packet
+      sendto(rra.udp_socket, &packet, sizeof(struct rtp_hdr) + payload_size, 0, (const struct sockaddr *)target, sizeof(struct sockaddr_in));
       usleep(1000000 / pps);
     }
   }
@@ -138,7 +142,7 @@ e0:
 int main(int argc, char *argv[]) {
   int ppp = 4;
   int payload_size = 160;
-  int payload_type = 8;
+  int payload_type = RTP_PCMA;
   if (argc < 4) {
     printf("syntax: rtpscan hostname port_range_start port_range_end [packets_per_port] [payload_size] [payload_type]\n");
     return -1;
