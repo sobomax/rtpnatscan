@@ -133,6 +133,13 @@ struct rtp_packet_chunk {
     int whole_packet_matched;
 };
 
+struct rtp_pt_profile {
+    int bytes_per_frame;
+    int ticks_per_frame;
+};
+
+int rtp_pt_info(int, struct rtp_pt_profile *);
+
 #define	RTP_HDR_LEN(rhp)	(sizeof(*(rhp)) + ((rhp)->cc * sizeof((rhp)->csrc[0])))
 #define	SEQ_DIST(seq1, seq2) \
   ((seq2) >= (seq1) ? ((seq2) - (seq1)) : ((int)(seq2) + 65536 - (int)(seq1)))
@@ -143,5 +150,7 @@ rtp_parser_err_t rtp_packet_parse(struct rtp_packet *);
 void rtp_packet_first_chunk_find(struct rtp_packet *, struct rtp_packet_chunk *, int min_nsamples);
 
 #define ts_less(ts1, ts2) (((ts1) - (ts2)) > (uint32_t) (1 << 31))
+
+#define RTP_SRATE	8000
 
 #endif

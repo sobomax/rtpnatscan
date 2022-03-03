@@ -19,6 +19,12 @@
 #include "rtp.h"
 #include "rtpp_time.h"
 
+static uint64_t
+random64(void)
+{
+    return (((uint64_t)random() << 32) | random());
+}
+
 struct sockaddr_in *create_peer(char *host, int port) {
   struct sockaddr_in *addr = NULL;
   struct hostent *hp = NULL;
@@ -49,6 +55,9 @@ struct rtp_receiver_stats {
 
 struct rtp_receiver_args {
   int udp_socket;
+  uint64_t ssrc_seed;
+  uint64_t seq_seed;
+  uint64_t ts_seed;
   struct rtp_receiver_stats *rrsp;
 };
 
@@ -86,9 +95,25 @@ void rtp_scan(char *host, int port_range_start, int port_range_end, int ppp, int
   int port;
   int loops;
   struct rtp_receiver_stats rrs = {.last_recv_ts = getdtime()};
-  struct rtp_receiver_args rra = {.rrsp = &rrs};
+  struct rtp_receiver_args rra = {
+    .rrsp = &rrs,
+    .ssrc_seed = random64(),
+    .seq_seed = random64(),
+    .ts_seed = random64()
+  };
   pthread_t rthr;
   int pps = 10000;
+  struct rtp_pt_profile pt_prof;
+
+  if (rtp_pt_info(payload_type, &pt_prof) != 0) {
+    printf("rtp_pt_info(%d) failed\n", payload_type);
+    return;
+  }
+  if ((payload_size % pt_prof.bytes_per_frame) != 0) {
+    printf("invalid payload size(%d), should be multiple of %d\n", payload_size, pt_prof.bytes_per_frame);
+    return;
+  }
+  int tsstep = RTP_SRATE * (payload_size / pt_prof.bytes_per_frame) * pt_prof.ticks_per_frame / 1000;
 
   target = create_peer(host, port_range_start);
   if (!target) return;
@@ -116,8 +141,12 @@ void rtp_scan(char *host, int port_range_start, int port_range_end, int ppp, int
   printf("scanning %s ports %d to %d with %d packets per port and %d bytes of payload type %d\n", host, port_range_start, port_range_end, ppp, payload_size, payload_type);
   for (port = port_range_start; port < port_range_end; port += 2) {
     target->sin_port = htons(port);
+    packet.hdr.ssrc = rra.ssrc_seed % (((uint32_t)port << 14) | (port >> 1));
+    uint16_t seq = rra.seq_seed % (((uint32_t)port << 14) | (port >> 1));
+    uint32_t ts = rra.ts_seed % (((uint32_t)port << 14) | (port >> 1));
     for (loops = 0; loops < ppp; loops++) {
-      packet.hdr.seq = htons(loops); // increase seq with every packet
+      packet.hdr.seq = htons(seq + loops); // increase seq with every packet
+      packet.hdr.ts = htonl(ts + (loops * tsstep));
       sendto(rra.udp_socket, &packet, sizeof(struct rtp_hdr) + payload_size, 0, (const struct sockaddr *)target, sizeof(struct sockaddr_in));
       usleep(1000000 / pps);
     }

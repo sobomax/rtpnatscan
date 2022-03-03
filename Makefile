@@ -7,7 +7,7 @@ CFLAGS=-O2 -Wall -g
 
 all:	rtpnatscan
 
-rtpnatscan:	rtp_nat_scan.o rtpp_time.o
+rtpnatscan:	rtp_nat_scan.o rtpp_time.o rtp.o
 	$(CC) -o rtpnatscan $^ -lpthread -lm
 
 rtcpnatscan:	rtcp_nat_scan.o
