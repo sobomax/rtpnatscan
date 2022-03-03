@@ -64,6 +64,11 @@ struct rtp_scan_args {
   struct rtp_receiver_stats *rrsp;
 };
 
+struct rtp_server {
+  int destport;
+  int npkts_in;
+};
+
 static void *
 rtp_receiver(void *targ)
 {
@@ -74,8 +79,11 @@ rtp_receiver(void *targ)
   } response;
   struct sockaddr_in sender;
   socklen_t sender_len = sizeof(sender);
+  struct rtp_server *servers[1024];
 
   rrap = (const struct rtp_scan_args *)targ;
+
+  memset(servers, '\0', sizeof(servers));
 
   for (;;) {
     int bytes_received = recvfrom(rrap->udp_socket, &response, sizeof(response), 0, (struct sockaddr *)&sender, &sender_len);
@@ -84,7 +92,27 @@ rtp_receiver(void *targ)
       rrap->rrsp->last_recv_ts = getdtime();
       pthread_mutex_unlock(&rrap->rrsp->lock);
       uint16_t seq = ntohs(response.hdr.seq);
-      printf("received %d bytes from target port %d, seq %u\n", bytes_received, ntohs(sender.sin_port), seq);
+      int destport = ntohs(sender.sin_port);
+      struct rtp_server *sp = NULL;
+      for (int i = 0; i < 1024; i++) {
+        if (servers[i] == NULL) {
+          sp = malloc(sizeof(struct rtp_server));
+          memset(sp, '\0', sizeof(struct rtp_server));
+          sp->destport = destport;
+          servers[i] = sp;
+          printf("received %d bytes from target port %d, seq %u\n", bytes_received, destport, seq);
+          break;
+        }
+        if (servers[i]->destport == destport) {
+          sp = servers[i];
+          break;
+        }
+      }
+      if (sp == NULL) {
+        printf("too many servers\n");
+        continue;
+      }
+      sp->npkts_in += 1;
     }
   }
 }
