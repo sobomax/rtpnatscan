@@ -14,6 +14,9 @@
 #include <stdio.h>
 #include <fcntl.h>
 #include <netdb.h>
+#include <pthread.h>
+
+#include "rtpp_time.h"
 
 struct sockaddr_in *create_peer(char *host, int port) {
   struct sockaddr_in *addr = NULL;
@@ -38,49 +41,101 @@ struct sockaddr_in *create_peer(char *host, int port) {
   return addr;
 }
 
-void rtp_scan(char *host, int port_range_start, int port_range_end, int ppp, int payload_size, int payload_type) {
-  struct sockaddr_in *target;
+struct rtp_receiver_stats {
+  pthread_mutex_t lock;
+  double last_recv_ts;
+};
+
+struct rtp_receiver_args {
+  int udp_socket;
+  struct rtp_receiver_stats *rrsp;
+};
+
+static void *
+rtp_receiver(void *targ)
+{
+  const struct rtp_receiver_args *rrap;
+  char response[512];
   struct sockaddr_in sender;
   socklen_t sender_len = sizeof(sender);
+
+  rrap = (const struct rtp_receiver_args *)targ;
+
+  for (;;) {
+    int bytes_received = recvfrom(rrap->udp_socket, &response, sizeof(response), 0, (struct sockaddr *)&sender, &sender_len);
+    if (bytes_received >= 12) {
+      pthread_mutex_lock(&rrap->rrsp->lock);
+      rrap->rrsp->last_recv_ts = getdtime();
+      pthread_mutex_unlock(&rrap->rrsp->lock);
+      uint16_t seq = ntohs(response[2]);
+      printf("received %d bytes from target port %d, seq %u\n", bytes_received, ntohs(sender.sin_port), seq);
+    }
+  }
+}
+
+void rtp_scan(char *host, int port_range_start, int port_range_end, int ppp, int payload_size, int payload_type) {
+  struct sockaddr_in *target;
   char packet[12 + payload_size];
-  char response[512];
-  int flags;
   int port;
   int loops;
-  int udp_socket;
+  struct rtp_receiver_stats rrs = {.last_recv_ts = getdtime()};
+  struct rtp_receiver_args rra = {.rrsp = &rrs};
+  pthread_t rthr;
+  int pps = 10000;
 
   target = create_peer(host, port_range_start);
   if (!target) return;
 
-  udp_socket = socket(PF_INET, SOCK_DGRAM, 0);
-  if (udp_socket == -1) {
+  rra.udp_socket = socket(PF_INET, SOCK_DGRAM, 0);
+  if (rra.udp_socket == -1) {
     printf("unable to create udp socket\n");
-    free(target);
-    return;
+    goto e0;
   }
-  flags = fcntl(udp_socket, F_GETFL);
-  fcntl(udp_socket, F_SETFL, flags | O_NONBLOCK);
 
   memset(&packet, 0, sizeof(packet));
   packet[0] = 0x80; // RTP version 2
   packet[1] = 0x80 | (payload_type & 0x7F); // marker bit set
+
+  if (pthread_mutex_init(&rrs.lock, NULL) != 0) {
+    printf("unable to create receiver mutex\n");
+    goto e1;
+  }
+  if (pthread_create(&rthr, NULL, rtp_receiver, (void *)&rra) != 0) {
+    printf("unable to create receiver thread\n");
+    goto e2;
+  }
 
   printf("scanning %s ports %d to %d with %d packets per port and %d bytes of payload type %d\n", host, port_range_start, port_range_end, ppp, payload_size, payload_type);
   for (port = port_range_start; port < port_range_end; port += 2) {
     target->sin_port = htons(port);
     for (loops = 0; loops < ppp; loops++) {
       packet[3] = loops; // increase seq with every packet
-      sendto(udp_socket, &packet, sizeof(packet), 0, (const struct sockaddr *)target, sizeof(struct sockaddr_in));
-      usleep((5 + loops) * 1000);
+      sendto(rra.udp_socket, &packet, sizeof(packet), 0, (const struct sockaddr *)target, sizeof(struct sockaddr_in));
+      usleep(1000000 / pps);
+#if 0
 
-      int bytes_received = recvfrom(udp_socket, &response, sizeof(response), 0, (struct sockaddr *)&sender, &sender_len);
+      int bytes_received = recvfrom(rra.udp_socket, &response, sizeof(response), 0, (struct sockaddr *)&sender, &sender_len);
       if (bytes_received >= 12) {
         uint16_t seq = ntohs(response[2]);
         printf("received %d bytes from target port %d, seq %u\n", bytes_received, ntohs(sender.sin_port), seq);
       }
+#endif
     }
   }
-  close(udp_socket);
+
+  for (;;) {
+    pthread_mutex_lock(&rrs.lock);
+    double last_recv_ts = rrs.last_recv_ts;
+    pthread_mutex_unlock(&rrs.lock);
+    if (getdtime() - last_recv_ts > 5.0)
+        break;
+  }
+
+e2:
+  pthread_mutex_destroy(&rrs.lock);
+e1:
+  close(rra.udp_socket);
+e0:
   free(target);
 }
 
