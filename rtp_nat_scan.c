@@ -124,6 +124,7 @@ rtp_receiver(void *targ)
       if (servers[i] == NULL) {
         sp = malloc(sizeof(struct rtp_server));
         memset(sp, '\0', sizeof(struct rtp_server));
+        sp->target = sender;
         sp->destport = destport;
         sp->rsap = rsap;
         if (pthread_mutex_init(&sp->lock, NULL) != 0) {
@@ -147,7 +148,7 @@ rtp_receiver(void *targ)
       printf("too many servers\n");
       continue;
     }
-    sp->npkts_in += 1;
+    rtp_server_inpkt(sp);
   }
   return (servers);
 }
@@ -258,13 +259,14 @@ int main(int argc, char *argv[]) {
     .ts_seed = random64()
   };
 
-  if (argc < 4) {
-    printf("syntax: rtpscan hostname port_range_start port_range_end [packets_per_port] [payload_size] [payload_type]\n");
+  if (argc < 5) {
+    printf("syntax: rtpscan hostname port_range_start port_range_end prompt [packets_per_port] [payload_size] [payload_type]\n");
     return -1;
   }
-  if (argc >= 5) rra.ppp = atoi(argv[4]);
-  if (argc >= 6) rra.payload.size = atoi(argv[5]);
-  if (argc == 7) rra.payload.type = atoi(argv[6]);
+  rra.playfile = argv[4];
+  if (argc >= 6) rra.ppp = atoi(argv[5]);
+  if (argc >= 7) rra.payload.size = atoi(argv[6]);
+  if (argc == 8) rra.payload.type = atoi(argv[7]);
 
   rtp_scan(argv[1], atoi(argv[2]), atoi(argv[3]), &rra);
   return 0;

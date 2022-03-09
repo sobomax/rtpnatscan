@@ -12,4 +12,5 @@ struct rtp_scan_args {
   uint64_t seq_seed;
   uint64_t ts_seed;
   struct rtp_receiver_stats *rrsp;
+  const char *playfile;
 };
