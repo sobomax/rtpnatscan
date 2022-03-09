@@ -19,6 +19,8 @@
 #include <pthread.h>
 
 #include "rtp.h"
+#include "rtp_scan.h"
+#include "rtp_server.h"
 #include "rtpp_time.h"
 
 #define MAX_SERVERS 1024
@@ -58,22 +60,6 @@ struct rtp_receiver_stats {
   int done;
 };
 
-struct rtp_scan_args {
-  int ppp;
-  int payload_size;
-  int payload_type;
-  int udp_socket;
-  uint64_t ssrc_seed;
-  uint64_t seq_seed;
-  uint64_t ts_seed;
-  struct rtp_receiver_stats *rrsp;
-};
-
-struct rtp_server {
-  int destport;
-  int npkts_in;
-};
-
 static int
 rtp_receiver_isdone(struct rtp_receiver_stats *rrsp)
 {
@@ -97,7 +83,7 @@ rtp_receiver_setdone(struct rtp_receiver_stats *rrsp)
 static void *
 rtp_receiver(void *targ)
 {
-  const struct rtp_scan_args *rrap;
+  const struct rtp_scan_args *rsap;
   union {
     struct rtp_hdr hdr;
     char raw[512];
@@ -107,14 +93,14 @@ rtp_receiver(void *targ)
   struct rtp_server **servers;
   struct pollfd pfds[1];
 
-  rrap = (const struct rtp_scan_args *)targ;
+  rsap = (const struct rtp_scan_args *)targ;
 
   servers = malloc(sizeof(struct rtp_server *) * MAX_SERVERS);
   memset(servers, '\0', sizeof(struct rtp_server *) * MAX_SERVERS);
-  pfds[0].fd = rrap->udp_socket;
+  pfds[0].fd = rsap->udp_socket;
   pfds[0].events = POLLIN;
 
-  for (; rtp_receiver_isdone(rrap->rrsp) == 0;) {
+  for (; rtp_receiver_isdone(rsap->rrsp) == 0;) {
     int pres = poll(pfds, 1, 1000);
     if (pres < 0) {
         if (errno == EINTR)
@@ -124,34 +110,44 @@ rtp_receiver(void *targ)
     }
     if (pres == 0)
         continue;
-    int bytes_received = recvfrom(rrap->udp_socket, &response, sizeof(response), 0, (struct sockaddr *)&sender, &sender_len);
-    if (bytes_received >= 12) {
-      pthread_mutex_lock(&rrap->rrsp->lock);
-      rrap->rrsp->last_recv_ts = getdtime();
-      pthread_mutex_unlock(&rrap->rrsp->lock);
-      uint16_t seq = ntohs(response.hdr.seq);
-      int destport = ntohs(sender.sin_port);
-      struct rtp_server *sp = NULL;
-      for (int i = 0; i < MAX_SERVERS; i++) {
-        if (servers[i] == NULL) {
-          sp = malloc(sizeof(struct rtp_server));
-          memset(sp, '\0', sizeof(struct rtp_server));
-          sp->destport = destport;
-          servers[i] = sp;
-          printf("received %d bytes from target port %d, seq %u, pt %u\n", bytes_received, destport, seq, response.hdr.pt);
-          break;
+    int bytes_received = recvfrom(rsap->udp_socket, &response, sizeof(response), 0, (struct sockaddr *)&sender, &sender_len);
+    if (bytes_received < sizeof(struct rtp_hdr))
+      continue;
+
+    pthread_mutex_lock(&rsap->rrsp->lock);
+    rsap->rrsp->last_recv_ts = getdtime();
+    pthread_mutex_unlock(&rsap->rrsp->lock);
+    uint16_t seq = ntohs(response.hdr.seq);
+    int destport = ntohs(sender.sin_port);
+    struct rtp_server *sp = NULL;
+    for (int i = 0; i < MAX_SERVERS; i++) {
+      if (servers[i] == NULL) {
+        sp = malloc(sizeof(struct rtp_server));
+        memset(sp, '\0', sizeof(struct rtp_server));
+        sp->destport = destport;
+        sp->rsap = rsap;
+        if (pthread_mutex_init(&sp->lock, NULL) != 0) {
+          printf("pthread_mutex_init() failed\n");
+          abort();
         }
-        if (servers[i]->destport == destport) {
-          sp = servers[i];
-          break;
+        if (pthread_create(&sp->sthr, NULL, rtp_server_thread, (void *)sp) != 0) {
+          printf("pthread_mutex_init() failed\n");
+          abort();
         }
+        servers[i] = sp;
+        printf("received %d bytes from target port %d, seq %u, pt %u\n", bytes_received, destport, seq, response.hdr.pt);
+        break;
       }
-      if (sp == NULL) {
-        printf("too many servers\n");
-        continue;
+      if (servers[i]->destport == destport) {
+        sp = servers[i];
+        break;
       }
-      sp->npkts_in += 1;
     }
+    if (sp == NULL) {
+      printf("too many servers\n");
+      continue;
+    }
+    sp->npkts_in += 1;
   }
   return (servers);
 }
@@ -171,15 +167,17 @@ void rtp_scan(char *host, int port_range_start, int port_range_end, struct rtp_s
   struct rtp_server **servers;
 
   rsap->rrsp = &rrs;
-  if (rtp_pt_info(rsap->payload_type, &pt_prof) != 0) {
-    printf("rtp_pt_info(%d) failed\n", rsap->payload_type);
+  if (rtp_pt_info(rsap->payload.type, &pt_prof) != 0) {
+    printf("rtp_pt_info(%d) failed\n", rsap->payload.type);
     return;
   }
-  if ((rsap->payload_size % pt_prof.bytes_per_frame) != 0) {
-    printf("invalid payload size(%d), should be multiple of %d\n", rsap->payload_size, pt_prof.bytes_per_frame);
+  if ((rsap->payload.size % pt_prof.bytes_per_frame) != 0) {
+    printf("invalid payload size(%d), should be multiple of %d\n", rsap->payload.size, pt_prof.bytes_per_frame);
     return;
   }
-  int tsstep = RTP_SRATE * (rsap->payload_size / pt_prof.bytes_per_frame) * pt_prof.ticks_per_frame / 1000;
+  rsap->payload.tsstep_ms = (rsap->payload.size / pt_prof.bytes_per_frame) * pt_prof.ticks_per_frame;
+
+  int tsstep = RTP_SRATE * rsap->payload.tsstep_ms / 1000;
 
   target = create_peer(host, port_range_start);
   if (!target) return;
@@ -192,7 +190,7 @@ void rtp_scan(char *host, int port_range_start, int port_range_end, struct rtp_s
 
   memset(&packet, 0, sizeof(packet));
   packet.hdr.version = 2; // RTP version 2
-  packet.hdr.pt = rsap->payload_type;
+  packet.hdr.pt = rsap->payload.type;
   packet.hdr.mbt = 1; // marker bit set
 
   if (pthread_mutex_init(&rrs.lock, NULL) != 0) {
@@ -205,7 +203,7 @@ void rtp_scan(char *host, int port_range_start, int port_range_end, struct rtp_s
   }
 
   printf("scanning %s ports %d to %d with %d packets per port and %d bytes of payload type %d\n",
-   host, port_range_start, port_range_end, rsap->ppp, rsap->payload_size, rsap->payload_type);
+   host, port_range_start, port_range_end, rsap->ppp, rsap->payload.size, rsap->payload.type);
   for (port = port_range_start; port < port_range_end; port += 2) {
     target->sin_port = htons(port);
     packet.hdr.ssrc = rsap->ssrc_seed % (((uint32_t)port << 14) | (port >> 1));
@@ -214,7 +212,7 @@ void rtp_scan(char *host, int port_range_start, int port_range_end, struct rtp_s
     for (loops = 0; loops < rsap->ppp; loops++) {
       packet.hdr.seq = htons(seq + loops); // increase seq with every packet
       packet.hdr.ts = htonl(ts + (loops * tsstep));
-      sendto(rsap->udp_socket, &packet, sizeof(struct rtp_hdr) + rsap->payload_size, 0, (const struct sockaddr *)target, sizeof(struct sockaddr_in));
+      sendto(rsap->udp_socket, &packet, sizeof(struct rtp_hdr) + rsap->payload.size, 0, (const struct sockaddr *)target, sizeof(struct sockaddr_in));
       usleep(1000000 / pps);
     }
   }
@@ -233,7 +231,9 @@ void rtp_scan(char *host, int port_range_start, int port_range_end, struct rtp_s
     struct rtp_server *sp = servers[i];
     if (sp == NULL)
       break;
+    pthread_join(sp->sthr, NULL);
     printf("Port %d number of packets %d\n", sp->destport, sp->npkts_in);
+    pthread_mutex_destroy(&sp->lock);
     free(sp);
   }
   free(servers);
@@ -249,8 +249,10 @@ e0:
 int main(int argc, char *argv[]) {
   struct rtp_scan_args rra = {
     .ppp = 4,
-    .payload_size = 160,
-    .payload_type = RTP_PCMA,
+    .payload = {
+      .size = 160,
+      .type = RTP_PCMA
+    },
     .ssrc_seed = random64(),
     .seq_seed = random64(),
     .ts_seed = random64()
@@ -261,8 +263,8 @@ int main(int argc, char *argv[]) {
     return -1;
   }
   if (argc >= 5) rra.ppp = atoi(argv[4]);
-  if (argc >= 6) rra.payload_size = atoi(argv[5]);
-  if (argc == 7) rra.payload_type = atoi(argv[6]);
+  if (argc >= 6) rra.payload.size = atoi(argv[5]);
+  if (argc == 7) rra.payload.type = atoi(argv[6]);
 
   rtp_scan(argv[1], atoi(argv[2]), atoi(argv[3]), &rra);
   return 0;

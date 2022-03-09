@@ -1,14 +1,14 @@
 CROSS_ARCH="Linux"
 CROSS_COMPILE="$(TARGET_CROSS)"
-CFLAGS=-O2 -Wall -g 
+CFLAGS=-O2 -Wall -g -I/usr/local/include
 
 %.lo : %.c
 	$(CC) $(CFLAGS) -o $@ -c $<
 
 all:	rtpnatscan
 
-rtpnatscan:	rtp_nat_scan.o rtpp_time.o rtp.o
-	$(CC) -o rtpnatscan $^ -lpthread -lm
+rtpnatscan:	rtp_nat_scan.o rtpp_time.o rtp.o rtp_server.o
+	$(CC) -o rtpnatscan $^ -lpthread -lm -L/usr/local/lib -lelperiodic
 
 rtcpnatscan:	rtcp_nat_scan.o
 	$(CC) -o rtcpnatscan $^ -lpthread -lm
