@@ -65,13 +65,12 @@ rtp_server_thread(void *arg)
     prdic_procrastinate(pd);
 
     ssize_t rval = read(fd, packet.raw + sizeof(struct rtp_hdr), rsap->payload.size);
-    if (rval < rsap->payload.size)
-      break;
-
-    packet.hdr.seq = htons(seq + loops); // increase seq with every packet
-    packet.hdr.ts = htonl(ts + (loops * tsstep));
-    sendto(rsap->udp_socket, &packet, sizeof(struct rtp_hdr) + rsap->payload.size, 0, (const struct sockaddr *)&sp->target, sizeof(struct sockaddr_in));
-    loops += 1;
+    if (rval == rsap->payload.size) {
+      packet.hdr.seq = htons(seq + loops); // increase seq with every packet
+      packet.hdr.ts = htonl(ts + (loops * tsstep));
+      sendto(rsap->udp_socket, &packet, sizeof(struct rtp_hdr) + rsap->payload.size, 0, (const struct sockaddr *)&sp->target, sizeof(struct sockaddr_in));
+      loops += 1;
+    }
 
     int npkts_in_post = rtp_server_get_npkts_in(sp);
     if (npkts_in_pre == npkts_in_post)
