@@ -273,6 +273,7 @@ int main(int argc, char *argv[]) {
   if (argc >= 7) rra.payload.size = atoi(argv[6]);
   if (argc == 8) rra.payload.type = atoi(argv[7]);
 
+  srandomdev();
   rtp_scan(argv[1], atoi(argv[2]), atoi(argv[3]), &rra);
   return 0;
 }
