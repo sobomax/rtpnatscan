@@ -20,7 +20,7 @@
 #include "rtp_scan.h"
 #include "rtp.h"
 
-#define MAX_IDLE_NPKTS 5
+#define MAX_IDLE_NPKTS 25
 
 void *
 rtp_server_thread(void *arg)
