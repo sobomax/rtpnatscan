@@ -18,6 +18,7 @@
 #include <poll.h>
 #include <pthread.h>
 
+#include "mmfile.h"
 #include "rtp.h"
 #include "rtp_scan.h"
 #include "rtp_server.h"
@@ -163,7 +164,7 @@ void rtp_scan(char *host, int port_range_start, int port_range_end, struct rtp_s
   int loops;
   struct rtp_receiver_stats rrs = {.last_recv_ts = getdtime(), .done = 0};
   pthread_t rthr;
-  int pps = 10000;
+  int pps = 1000;
   struct rtp_pt_profile pt_prof;
   struct rtp_server **servers;
 
@@ -262,6 +263,10 @@ int main(int argc, char *argv[]) {
   if (argc < 5) {
     printf("syntax: rtpscan hostname port_range_start port_range_end prompt [packets_per_port] [payload_size] [payload_type]\n");
     return -1;
+  }
+  if (minit() < 0) {
+    printf("minit() failed\n");
+    return (-1);
   }
   rra.playfile = argv[4];
   if (argc >= 6) rra.ppp = atoi(argv[5]);

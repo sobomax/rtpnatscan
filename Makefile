@@ -7,7 +7,7 @@ CFLAGS=-O2 -Wall -g -I/usr/local/include
 
 all:	rtpnatscan
 
-rtpnatscan:	rtp_nat_scan.o rtpp_time.o rtp.o rtp_server.o
+rtpnatscan:	rtp_nat_scan.o rtpp_time.o rtp.o rtp_server.o mmfile.c
 	$(CC) -o rtpnatscan $^ -lpthread -lm -L/usr/local/lib -lelperiodic
 
 rtcpnatscan:	rtcp_nat_scan.o

@@ -13,6 +13,7 @@
 
 #include <elperiodic.h>
 
+#include "mmfile.h"
 #include "rtp_server.h"
 #include "rtp_scan.h"
 #include "rtp.h"
@@ -40,7 +41,7 @@ rtp_server_thread(void *arg)
   if (fname == NULL)
     abort();
 
-  fd = open(fname, O_RDONLY);
+  fd = mopen(fname, O_RDONLY);
   if (fd < 0)
     abort();
   free(fname);
@@ -64,7 +65,7 @@ rtp_server_thread(void *arg)
   for (int idle_ncycles = 0; idle_ncycles < MAX_IDLE_NPKTS; idle_ncycles++) {
     prdic_procrastinate(pd);
 
-    ssize_t rval = read(fd, packet.raw + sizeof(struct rtp_hdr), rsap->payload.size);
+    ssize_t rval = mread(fd, packet.raw + sizeof(struct rtp_hdr), rsap->payload.size);
     if (rval == rsap->payload.size) {
       packet.hdr.seq = htons(seq + loops); // increase seq with every packet
       packet.hdr.ts = htonl(ts + (loops * tsstep));
@@ -81,7 +82,7 @@ rtp_server_thread(void *arg)
 
   printf("%d went idle after %d\n", sp->destport, npkts_in_pre);
 
-  close(fd);
+  mclose(fd);
   prdic_free(pd);
 
   return (NULL);
