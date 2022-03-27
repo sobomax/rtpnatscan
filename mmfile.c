@@ -105,8 +105,10 @@ mclose(int fdi)
 {
     struct mfd *mp;
 
+    pthread_mutex_lock(&mmlock);
     mp = &mftable[fdi];
     memset(mp, '\0', sizeof(struct mfd));
+    pthread_mutex_unlock(&mmlock);
     return (0);
 }
 
