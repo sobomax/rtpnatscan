@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -37,8 +39,8 @@ rtp_server_thread(void *arg)
 
   freq = 1000.0 / rsap->payload.tsstep_ms;
 
-  asprintf(&fname, "%s.%d", rsap->playfile, rsap->payload.type);
-  if (fname == NULL)
+  int arval = asprintf(&fname, "%s.%d", rsap->playfile, rsap->payload.type);
+  if (arval <=0 || fname == NULL)
     abort();
 
   fd = mopen(fname, O_RDONLY);
