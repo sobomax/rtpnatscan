@@ -6,6 +6,7 @@
  */
  
 #include <sys/types.h>
+#include <sys/time.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <errno.h>
@@ -248,8 +249,27 @@ e0:
   free(target);
 }
 
+static void
+seedrandom(void)
+{
+  int fd;
+  unsigned long junk;
+  struct timeval tv;
+
+  fd = open("/dev/urandom", O_RDONLY, 0);
+  if (fd >= 0) {
+    read(fd, &junk, sizeof(junk));
+    close(fd);
+  } else {
+    junk = 0;
+  }
+
+    gettimeofday(&tv, NULL);
+    srandom((getpid() << 16) ^ tv.tv_sec ^ tv.tv_usec ^ junk);
+}
+
 int main(int argc, char *argv[]) {
-  srandomdev();
+  seedrandom();
   struct rtp_scan_args rra = {
     .ppp = 4,
     .payload = {
